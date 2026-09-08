@@ -11,7 +11,6 @@ data/sample/
 frontend/sample/*.splat
 frontend/sample/*.mp4
 *.log
-.python-version
 node_modules/
 dist/
 .env

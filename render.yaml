@@ -3,7 +3,7 @@ services:
     name: onepass3d
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: python -m pip install --upgrade pip && python -m pip install --only-binary=:all: -r requirements.txt
     startCommand: python run.py
     envVars:
       - key: PYTHON_VERSION
