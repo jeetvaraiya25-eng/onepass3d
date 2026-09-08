@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.DS_Store
+.idea/
+.vscode/
+data/jobs/
+data/sample/
+frontend/sample/*.splat
+frontend/sample/*.mp4
+*.log
+.python-version
+node_modules/
+dist/
+.env

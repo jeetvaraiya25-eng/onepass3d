@@ -1,0 +1,17 @@
+Orbit drone sample (not spherical 360, not the 3DGS train scene)
+
+The Overview page embeds DJI’s Mini 4 Pro orbit short as the flight pattern:
+  https://www.youtube.com/shorts/ZV2BgGGax1s
+That file is DJI / YouTube copyright and is not copied into this repo.
+
+Downloadable sample: drone orbit around a chimney
+  Source: https://www.pexels.com/video/drone-orbit-over-a-tall-chimney-19395246/
+  Author: Dimitar Germanov
+  License: Pexels License (free to use)
+
+Photoreal Gaussian splat examples (data/sample/, not committed):
+  train.splat   Inria / Tanks and Temples train
+  truck.splat   Tanks and Temples truck
+  room.splat    Mip-NeRF 360 room
+  plush.splat   object-scale plush
+  Source: https://huggingface.co/cakewalk/splat-data
