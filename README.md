@@ -1,6 +1,6 @@
 # OnePass3D
 
-Web app for **SIH 26158**: turn a **single-pass drone video or photo set** into a georeferenced 3D model (point cloud, mesh, Gaussian splat file) and inspect it in the browser.
+Web app that turns a **single-pass drone video or photo set** into a georeferenced 3D model (point cloud, mesh, Gaussian splat file) and inspect it in the browser.
 
 Organization: National Technical Research Organisation (NTRO) · Theme: Robotics and Drones · Category: Software
 
