@@ -1,4 +1,4 @@
-import { createJob } from "../api.js";
+import { createJob, getHealth } from "../api.js";
 import { explainUploadError } from "../errors.js";
 import { navigate } from "../router.js";
 
@@ -24,6 +24,19 @@ export function renderUpload(root) {
       <input id="job-name" value="Kitchen scan" />
     </div>
 
+    <div class="quality-pick" role="radiogroup" aria-label="Reconstruction quality">
+      <label class="quality-card">
+        <input type="radio" name="quality" value="normal" checked />
+        <strong>Normal</strong>
+        <span>Faster. FINAL is a colored 3D mesh from the dense cloud. Use this for a first look.</span>
+      </label>
+      <label class="quality-card">
+        <input type="radio" name="quality" value="high" />
+        <strong>Higher detail</strong>
+        <span>Slower. More frames and a photo texture when the video has enough overlap.</span>
+      </label>
+    </div>
+
     <div class="drop" id="drop">
       <div class="drop-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -47,7 +60,26 @@ export function renderUpload(root) {
       <a class="btn ghost" href="#/jobs">View queue</a>
     </div>
     <p class="error" id="upload-error"></p>
+    <p class="lede" id="colmap-status" style="margin-top:18px;font-size:0.92rem"></p>
   `;
+
+  getHealth()
+    .then((health) => {
+      const el = root.querySelector("#colmap-status");
+      if (!el) return;
+      if (!health.colmap?.installed) {
+        el.textContent = "COLMAP is not installed on this machine. Install it with brew install colmap, then restart the backend.";
+        return;
+      }
+      if (!health.openmvs?.installed && health.denseBackend === "unavailable") {
+        el.textContent = "COLMAP is installed, but this Mac cannot finish a 3D mesh without OpenMVS. Place OpenMVS binaries in tools/openmvs.";
+        return;
+      }
+      el.textContent = health.openmvs?.installed
+        ? "Local Mac pipeline: COLMAP cameras + OpenMVS dense mesh. No CUDA required."
+        : "COLMAP is installed. Dense reconstruction will use OpenMVS if PatchMatch cannot run.";
+    })
+    .catch(() => {});
 
   const files = new Map();
   const list = root.querySelector("#file-list");
@@ -92,7 +124,8 @@ export function renderUpload(root) {
     button.disabled = true;
     button.textContent = "Uploading…";
     try {
-      const job = await createJob([...files.values()], root.querySelector("#job-name").value);
+      const quality = root.querySelector('input[name="quality"]:checked')?.value || "normal";
+      const job = await createJob([...files.values()], root.querySelector("#job-name").value, quality);
       navigate(`/jobs/${job.id}`);
     } catch (err) {
       button.disabled = false;

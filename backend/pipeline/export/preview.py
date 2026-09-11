@@ -13,8 +13,11 @@ def write_preview(output_dir: Path, xyz: np.ndarray, rgb: np.ndarray, frames: li
 
     if frames:
         thumb = frames[min(len(frames) // 2, len(frames) - 1)]
-        th = cv2.resize(thumb, (560, 360))
-        canvas[40:400, 40:600] = th
+        if isinstance(thumb, (str, Path)):
+            thumb = cv2.imread(str(thumb), cv2.IMREAD_COLOR)
+        if thumb is not None and getattr(thumb, "size", 0):
+            th = cv2.resize(thumb, (560, 360))
+            canvas[40:400, 40:600] = th
 
     scatter = np.zeros((560, 560, 3), dtype=np.uint8)
     scatter[:] = (12, 14, 18)

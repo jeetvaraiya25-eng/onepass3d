@@ -91,55 +91,75 @@ export async function renderViewer(root, id) {
   }
   const units = job.result?.units || (job.metric ? "meters" : "relative units");
   const photoreal = Boolean(job.result?.photoreal);
+  const metrics = job.result?.metrics || {};
+  const hasGlb = Boolean(job.result?.files?.glb);
   const hasSplat = Boolean(job.result?.files?.splat);
-  const hasMesh = Boolean(job.result?.files?.mesh);
-  const previewOnly = Boolean(job.result?.confidence?.preview) || (!photoreal && !hasSplat);
+  const hasMesh = Boolean(job.result?.files?.mesh || hasGlb);
+  const previewOnly = Boolean(job.result?.confidence?.preview) && !hasGlb && !hasMesh;
   const splatName = job.result?.files?.splat || "scene.splat";
   const exampleScene = sceneFromJob(job);
   const sampleSplat = photoreal && exampleScene ? `/sample/${exampleScene}.splat` : null;
   const gaussiansName = hasSplat ? splatName : "gaussians.ply";
-  const initialMode = photoreal || hasSplat ? "splats" : hasMesh && !previewOnly ? "mesh" : "points";
-  const showSplatUi = photoreal || hasSplat;
-  const denseCpu = hasSplat && !photoreal;
+  const realMesh = Boolean(job.result?.confidence?.mesh) && Number(job.triangle_count || metrics.meshTriangles || 0) >= 40;
+  const meshPrimary = !photoreal && realMesh && (hasGlb || hasMesh);
+  const initialMode = photoreal ? "splats" : meshPrimary ? "mesh" : "points";
+  const showSplatUi = photoreal;
+  const showMeshUi = meshPrimary;
+  const textured = Boolean(job.result?.confidence?.textured || metrics.textured);
+  const artifact = job.result?.artifact || (photoreal ? "Trained 3DGS" : textured ? "TEXTURED 3D MESH" : meshPrimary ? "VERTEX-COLORED 3D MESH" : "CPU preview");
+  const triangles = Number(metrics.meshTriangles || job.triangle_count || 0);
+  const densePoints = Number(metrics.densePoints || job.point_count || 0);
+  const inputFrames = Number(metrics.inputFrames || job.frame_count || 0);
+  const registered = Number(metrics.registeredFrames || 0);
+  const registration = metrics.registrationRatio;
+  const reproj = metrics.reprojectionError;
+  const components = metrics.components;
+  const sparsePoints = Number(metrics.sparsePoints || 0);
+  const pipeline = metrics.pipeline || job.result?.pipeline || "";
   root.innerHTML = `
     <div class="viewer-layout">
       <div>
         <div class="viewport" id="viewport">
           <div class="toolbar">
-            ${showSplatUi ? "" : `<button data-mode="points" class="${initialMode === "points" ? "active" : ""}">Points</button>`}
-            ${showSplatUi ? `<button data-mode="splats" class="${initialMode === "splats" ? "active" : ""}">Gaussians</button>` : ""}
-            ${hasMesh && !previewOnly ? `<button data-mode="mesh" class="${initialMode === "mesh" ? "active" : ""}">Mesh</button>` : ""}
-            ${showSplatUi ? "" : `<button data-fly="1">Orbit</button>`}
-            ${showSplatUi ? "" : `<button data-measure="1">Measure</button>`}
+            ${showSplatUi ? `<button data-mode="splats" class="active">Gaussians</button>` : ""}
+            ${showMeshUi ? `<button data-mode="mesh" class="active">FINAL</button>` : ""}
+            ${!photoreal && job.result?.files?.sparse ? `<button data-diag="sparse">SPARSE</button>` : ""}
+            ${!photoreal && job.result?.files?.pointcloud ? `<button data-diag="dense">DENSE</button>` : ""}
+            ${!photoreal && (hasMesh || hasGlb) ? `<button data-diag="mesh">MESH</button>` : ""}
+            ${!showSplatUi && !showMeshUi ? `<button data-mode="points" class="active">Points</button>` : ""}
+            ${showMeshUi ? `<button data-fly="1">Orbit</button>` : ""}
             ${showSplatUi ? `<button data-level="1">Level</button>` : ""}
             <button data-reset="1">Reset</button>
           </div>
-          <div class="measure-readout" id="measure">${showSplatUi ? "Phone: left stick walks · drag to look · pinch to zoom. Computer: WASD walks · drag to look" : "Drag to orbit · scroll to zoom · this is a sparse preview"}</div>
+          <div class="measure-readout" id="measure">${showSplatUi ? "Phone: left stick walks · drag to look · pinch to zoom. Computer: WASD walks · drag to look" : "Drag to orbit · scroll to zoom the 3D model"}</div>
         </div>
       </div>
       <aside class="side card">
         <h2>${job.name}</h2>
-        <p class="side-sub">${photoreal ? "Trained 3DGS" : denseCpu ? "Dense CPU preview" : "CPU preview"} · ${job.id}</p>
-        ${
-          previewOnly
-            ? `<p class="notice"><span>${denseCpu ? "This is a dense CPU reconstruction of your video — you can see the layout, but it is not a trained 3DGS kitchen like Room." : "This upload is a quick CPU preview — a cloud of points, not photoreal 3D."} For photoreal quality, open <a href="#/examples">Room, Train, Truck, or Plush</a>.</span></p>`
-            : ""
-        }
+        <p class="side-sub">${artifact} · ${job.id}</p>
         <dl>
-          <dt>${showSplatUi ? "Gaussians" : "Points"}</dt><dd>${job.point_count.toLocaleString()}</dd>
-          ${hasMesh ? `<dt>Triangles</dt><dd>${job.triangle_count.toLocaleString()}</dd>` : ""}
-          <dt>Frames</dt><dd>${job.frame_count || "sample"}</dd>
+          <dt>${showSplatUi ? "Gaussians" : showMeshUi ? "Mesh triangles" : "Points"}</dt>
+          <dd>${(showMeshUi ? triangles : densePoints).toLocaleString()}</dd>
+          ${showMeshUi && densePoints ? `<dt>Dense points</dt><dd>${densePoints.toLocaleString()}</dd>` : ""}
+          ${showMeshUi && sparsePoints ? `<dt>Sparse points</dt><dd>${sparsePoints.toLocaleString()}</dd>` : ""}
+          <dt>Input frames</dt><dd>${inputFrames || (photoreal ? "sample" : "—")}</dd>
+          ${registered ? `<dt>Registered cameras</dt><dd>${registered.toLocaleString()}</dd>` : ""}
+          ${registration != null && !photoreal ? `<dt>Registration</dt><dd>${Math.round(Number(registration) * 100)}%</dd>` : ""}
+          ${reproj != null && !photoreal ? `<dt>Reprojection error</dt><dd>${Number(reproj).toFixed(2)} px</dd>` : ""}
+          ${components != null && !photoreal ? `<dt>Components</dt><dd>${components}</dd>` : ""}
           <dt>GPS</dt><dd>${job.has_gps ? "locked" : "none"}</dd>
-          <dt>Units</dt><dd>${units}</dd>
-          ${photoreal ? "" : `<dt>Mean conf.</dt><dd>${(job.result?.confidence?.mean || 0).toFixed(2)}</dd>`}
+          <dt>Scale</dt><dd>${units}</dd>
+          ${pipeline && !photoreal ? `<dt>Pipeline</dt><dd>${pipeline}</dd>` : ""}
+          ${metrics.qualityScore != null ? `<dt>Quality</dt><dd>${metrics.qualityScore}/100 · ${metrics.qualityStatus || ""}</dd>` : ""}
         </dl>
         <p class="note">${job.result?.confidence?.note || ""}</p>
         <p class="downloads-label">Downloads</p>
         <div class="downloads">
-          ${hasSplat ? `<a href="${fileUrl(id, splatName)}" download>Download Gaussians (.splat)</a>` : ""}
-          <a href="${fileUrl(id, "pointcloud.ply")}" download>Download point cloud (.ply)</a>
+          ${hasGlb ? `<a href="${fileUrl(id, "model.glb")}" download>Download 3D model (.glb)</a>` : ""}
           ${hasMesh ? `<a href="${fileUrl(id, "mesh.obj")}" download>Download mesh (.obj)</a>` : ""}
-          ${hasSplat ? "" : `<a href="${fileUrl(id, gaussiansName)}" download>Download Gaussians (.ply)</a>`}
+          <a href="${fileUrl(id, "pointcloud.ply")}" download>Download point cloud (.ply)</a>
+          ${hasSplat && photoreal ? `<a href="${fileUrl(id, splatName)}" download>Download Gaussians (.splat)</a>` : ""}
+          ${hasSplat && !photoreal ? "" : hasSplat ? "" : `<a href="${fileUrl(id, gaussiansName)}" download>Download Gaussians (.ply)</a>`}
           <a href="${fileUrl(id, "report.json")}" download>Download report (.json)</a>
         </div>
       </aside>
@@ -154,8 +174,9 @@ export async function renderViewer(root, id) {
     viewport,
     {
       pointcloud: fileUrl(id, "pointcloud.ply") + `?t=${encodeURIComponent(job.updated_at)}`,
-      splat: sampleSplat || (hasSplat ? fileUrl(id, splatName) : null),
-      mesh: hasMesh ? fileUrl(id, job.result.files.mesh) + `?t=${encodeURIComponent(job.updated_at)}` : null,
+      splat: sampleSplat || (photoreal && hasSplat ? fileUrl(id, splatName) : null),
+      mesh: hasMesh && job.result?.files?.mesh ? fileUrl(id, job.result.files.mesh) + `?t=${encodeURIComponent(job.updated_at)}` : null,
+      glb: hasGlb ? fileUrl(id, "model.glb") + `?t=${encodeURIComponent(job.updated_at)}&tex=1` : null,
     },
     {
       units,
@@ -180,7 +201,7 @@ export async function renderViewer(root, id) {
       onReady() {
         readout.textContent = showSplatUi
           ? "Phone: left stick walks · drag to look. Computer: WASD · drag to look"
-          : "Drag to orbit · scroll to zoom · this is a sparse preview";
+          : "Drag to orbit · scroll to zoom the 3D model";
       },
     }
   );
@@ -235,6 +256,45 @@ export async function renderViewer(root, id) {
     });
   }
   root.querySelector("[data-reset]").addEventListener("click", () => viewer.resetView());
+
+  root.querySelectorAll("[data-diag]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const kind = btn.dataset.diag;
+      root.querySelectorAll(".toolbar button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const urls = {
+        sparse: { pointcloud: fileUrl(id, "sparse.ply") + `?t=${encodeURIComponent(job.updated_at)}` },
+        dense: { pointcloud: fileUrl(id, "pointcloud.ply") + `?t=${encodeURIComponent(job.updated_at)}` },
+        mesh: {
+          mesh: job.result?.files?.mesh ? fileUrl(id, job.result.files.mesh) + `?t=${encodeURIComponent(job.updated_at)}` : null,
+        },
+      }[kind];
+      readout.textContent = kind === "sparse" ? "Sparse COLMAP points" : kind === "dense" ? "Dense point cloud" : "Raw mesh";
+      try {
+        viewer.dispose();
+        viewer = await mountViewer(viewport, urls, { units, yUp: false, initialMode: kind === "mesh" ? "mesh" : "points", preview: false });
+      } catch (err) {
+        readout.textContent = `Diagnostic view failed: ${err.message || err}`;
+      }
+    });
+  });
+  const finalBtn = root.querySelector('[data-mode="mesh"]');
+  if (finalBtn && !photoreal) {
+    finalBtn.addEventListener("click", async () => {
+      root.querySelectorAll("[data-diag]").forEach((b) => b.classList.remove("active"));
+      try {
+        viewer.dispose();
+        viewer = await mountViewer(
+          viewport,
+          { glb: hasGlb ? fileUrl(id, "model.glb") + `?t=${encodeURIComponent(job.updated_at)}` : null },
+          { units, yUp: false, initialMode: "mesh", preview: false }
+        );
+        readout.textContent = "Drag to orbit · scroll to zoom the 3D model";
+      } catch (err) {
+        readout.textContent = `Viewer failed: ${err.message || err}`;
+      }
+    });
+  }
 
   return () => viewer.dispose();
 }

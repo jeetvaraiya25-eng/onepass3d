@@ -1,0 +1,20 @@
+---
+description: Next steps after the Ignatius local test
+alwaysApply: true
+---
+
+# Morning plan — 11:00 today (do not skip)
+
+Jeet asked to be reminded if he forgets.
+
+1. **First:** resume **Ignatius higher detail** (`958d0537b604`). Start the local server, then Resume. Do not overwrite the finished first model (`69f9e938e3b9`).
+2. **Then:** update the live site (onepass3d.onrender.com) with this new OnePass3D build. Do not deploy until he confirms that morning.
+
+How to start the server:
+
+```bash
+cd /Users/jeet/SIH.html && source .venv/bin/activate && python run.py
+```
+
+Job page: http://127.0.0.1:8000/#/jobs/958d0537b604
+First model: http://127.0.0.1:8000/#/view/69f9e938e3b9

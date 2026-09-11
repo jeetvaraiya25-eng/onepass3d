@@ -180,8 +180,17 @@ def write_obj(path: Path, xyz: np.ndarray, faces: np.ndarray, rgb: np.ndarray | 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def export_mesh(output_dir: Path, xyz: np.ndarray, rgb: np.ndarray, conf: np.ndarray) -> tuple[int, Path, Path]:
-    mxyz, mrgb, mconf, faces = heightfield_mesh(xyz, rgb, conf)
+def export_mesh(
+    output_dir: Path,
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    conf: np.ndarray,
+    faces: np.ndarray | None = None,
+) -> tuple[int, Path, Path]:
+    if faces is None or len(faces) == 0:
+        mxyz, mrgb, mconf, faces = heightfield_mesh(xyz, rgb, conf, resolution=220)
+    else:
+        mxyz, mrgb, mconf = xyz, rgb, conf
     obj_path = output_dir / "mesh.obj"
     ply_path = output_dir / "mesh.ply"
     write_obj(obj_path, mxyz, faces, mrgb)

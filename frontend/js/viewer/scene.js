@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 
 export async function mountViewer(container, urls, options) {
+  if (urls.glb) return mountGlbViewer(container, urls, options);
   if (urls.splat) return mountSplatViewer(container, urls, options);
   return mountMeshViewer(container, urls, options);
 }
@@ -230,6 +232,151 @@ function robustLocalBounds(mesh) {
   };
 }
 
+async function loadGlbBuffer(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  const type = res.headers.get("content-type") || "";
+  const length = res.headers.get("content-length") || "?";
+  console.info("[OnePass3D] GLB response", { url, status: res.status, type, length });
+  if (!res.ok) {
+    throw new Error(`Model HTTP ${res.status} (${type}, ${length} bytes)`);
+  }
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 20) {
+    throw new Error(`Model file is empty (${buf.byteLength} bytes)`);
+  }
+  const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(8, buf.byteLength)));
+  if (!head.startsWith("glTF")) {
+    const peek = head.replace(/\s+/g, " ").slice(0, 48);
+    throw new Error(`Server did not return a GLB (got ${type || "unknown type"} starting ${JSON.stringify(peek)})`);
+  }
+  return buf;
+}
+
+function preparePhotogrammetryMaterial(mat, geometry) {
+  const hasColor = Boolean(geometry?.attributes?.color);
+  const hasMap = Boolean(mat.map);
+  if (hasMap) {
+    mat.vertexColors = false;
+    mat.color?.set(0xffffff);
+    if ("metalness" in mat) mat.metalness = 0;
+    if ("roughness" in mat) mat.roughness = 0.95;
+    if ("envMapIntensity" in mat) mat.envMapIntensity = 0;
+    mat.map.colorSpace = THREE.SRGBColorSpace;
+    mat.map.anisotropy = 8;
+    mat.map.needsUpdate = true;
+  } else {
+    mat.vertexColors = hasColor;
+    if (!hasColor) mat.color?.set(0xc8c8c8);
+  }
+  mat.side = THREE.DoubleSide;
+  mat.needsUpdate = true;
+}
+
+function frameObject(camera, controls, object) {
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) {
+    throw new Error("GLB loaded but contained no visible mesh.");
+  }
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const radius = Math.max(size.length() * 0.5, 0.25);
+  object.position.sub(center);
+  const dist = radius * 1.85;
+  camera.near = Math.max(dist / 200, 0.01);
+  camera.far = Math.max(dist * 40, 100);
+  camera.position.set(dist * 0.72, dist * 0.42, dist * 0.78);
+  camera.lookAt(0, 0, 0);
+  controls.target.set(0, 0, 0);
+  camera.updateProjectionMatrix();
+  controls.update();
+  return { radius };
+}
+
+async function mountGlbViewer(container, urls, options) {
+  const yUp = options.yUp !== false;
+  const { scene, camera, renderer, controls, status, ro } = createStage(container, {
+    yUp,
+    antialias: true,
+  });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3a3a, 0.7));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.15);
+  sun.position.set(40, 80, 50);
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xffffff, 0.45);
+  fill.position.set(-50, 20, -30);
+  scene.add(fill);
+  setStatus(status, "Loading 3D model…");
+
+  let root;
+  let radius;
+  try {
+    console.info("[OnePass3D] requesting GLB", urls.glb);
+    const buffer = await loadGlbBuffer(urls.glb);
+    console.info("[OnePass3D] GLB bytes", buffer.byteLength);
+    const loader = new GLTFLoader();
+    const resourcePath = new URL(".", new URL(urls.glb, window.location.href)).href;
+    const gltf = await loader.parseAsync(buffer, resourcePath);
+    root = gltf.scene;
+    let meshCount = 0;
+    let triCount = 0;
+    root.traverse((obj) => {
+      if (obj.isPoints && !obj.isMesh) return;
+      if (!obj.isMesh) return;
+      const pos = obj.geometry?.attributes?.position;
+      const idx = obj.geometry?.index;
+      if (!pos || pos.count < 3) return;
+      meshCount += 1;
+      triCount += idx ? idx.count / 3 : pos.count / 3;
+      obj.frustumCulled = false;
+      if (obj.material) {
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach((mat) => preparePhotogrammetryMaterial(mat, obj.geometry));
+      }
+    });
+    console.info("[OnePass3D] GLB meshes", { meshCount, triCount });
+    if (meshCount === 0 || triCount < 3) {
+      throw new Error("GLB parsed but it has no triangle mesh to show.");
+    }
+    scene.add(root);
+    const framed = frameObject(camera, controls, root);
+    radius = framed.radius;
+    setStatus(status, "");
+    if (options.onReady) options.onReady();
+  } catch (err) {
+    const message = err?.message || String(err);
+    setStatus(status, `Viewer failed: ${message}`, true);
+    throw err;
+  }
+
+  let raf = 0;
+  function loop() {
+    controls.update();
+    renderer.render(scene, camera);
+    raf = requestAnimationFrame(loop);
+  }
+  loop();
+
+  return {
+    setMode() {},
+    setConfidence() {},
+    setMeasure() {},
+    setFlyMode() {},
+    levelView() {},
+    resetView() {
+      frameObject(camera, controls, root);
+    },
+    dispose() {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      renderer.dispose();
+      container.querySelectorAll("canvas, .load-status").forEach((el) => el.remove());
+    },
+  };
+}
+
 async function mountSplatViewer(container, urls, options) {
   const status = document.createElement("div");
   status.className = "load-status";
@@ -336,56 +483,55 @@ async function mountMeshViewer(container, urls, options) {
   if (!yUp) grid.rotation.x = Math.PI / 2;
   scene.add(grid);
 
-  setStatus(status, "Loading reconstruction…");
+  setStatus(status, "Loading 3D model…");
   const loader = new PLYLoader();
-  const cloudGeom = await loader.loadAsync(urls.pointcloud);
-  const pos = cloudGeom.getAttribute("position");
-  const robust = robustPointBounds(pos);
-  cloudGeom.translate(-robust.center.x, -robust.center.y, -robust.center.z);
-  cloudGeom.computeBoundingBox();
-  if (!cloudGeom.attributes.normal) cloudGeom.computeVertexNormals();
-
-  const colors = cloudGeom.attributes.color;
-  const baseColors = colors ? colors.array.slice() : null;
-  applyConfidence(cloudGeom, options.confidence, baseColors);
-  const pointCount = pos?.count || 0;
-  const previewSparse = Boolean(options.preview) || pointCount < 80000;
-  const pointSize = Math.max(robust.radius * (previewSparse ? 0.016 : 0.009), 0.03);
-
-  const points = new THREE.Points(
-    cloudGeom,
-    new THREE.PointsMaterial({
-      size: pointSize,
-      vertexColors: Boolean(cloudGeom.attributes.color),
-      sizeAttenuation: true,
-    })
-  );
-  scene.add(points);
-
   let mesh = null;
+  let robust = { center: new THREE.Vector3(), radius: 8 };
   if (urls.mesh) {
-    try {
-      const meshGeom = await loader.loadAsync(urls.mesh);
-      meshGeom.translate(-robust.center.x, -robust.center.y, -robust.center.z);
-      meshGeom.computeVertexNormals();
-      mesh = new THREE.Mesh(
-        meshGeom,
-        new THREE.MeshLambertMaterial({
-          vertexColors: Boolean(meshGeom.attributes.color),
-          side: THREE.DoubleSide,
-          polygonOffset: true,
-          polygonOffsetFactor: 1,
-          polygonOffsetUnits: 1,
-        })
-      );
-      mesh.visible = options.initialMode === "mesh";
-      scene.add(mesh);
-    } catch {
-      mesh = null;
-    }
+    const meshGeom = await loader.loadAsync(urls.mesh);
+    const mpos = meshGeom.getAttribute("position");
+    robust = robustPointBounds(mpos);
+    meshGeom.translate(-robust.center.x, -robust.center.y, -robust.center.z);
+    meshGeom.computeVertexNormals();
+    mesh = new THREE.Mesh(
+      meshGeom,
+      new THREE.MeshLambertMaterial({
+        vertexColors: Boolean(meshGeom.attributes.color),
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+      })
+    );
+    mesh.visible = true;
+    scene.add(mesh);
   }
 
-  points.visible = options.initialMode !== "mesh" || !mesh;
+  let points = null;
+  let pointSize = 0.05;
+  if (urls.pointcloud && options.initialMode !== "mesh") {
+    const cloudGeom = await loader.loadAsync(urls.pointcloud);
+    const pos = cloudGeom.getAttribute("position");
+    if (!mesh) robust = robustPointBounds(pos);
+    cloudGeom.translate(-robust.center.x, -robust.center.y, -robust.center.z);
+    if (!cloudGeom.attributes.normal) cloudGeom.computeVertexNormals();
+    const colors = cloudGeom.attributes.color;
+    const baseColors = colors ? colors.array.slice() : null;
+    applyConfidence(cloudGeom, options.confidence, baseColors);
+    const pointCount = pos?.count || 0;
+    const previewSparse = Boolean(options.preview) || pointCount < 80000;
+    pointSize = Math.max(robust.radius * (previewSparse ? 0.016 : 0.009), 0.03);
+    points = new THREE.Points(
+      cloudGeom,
+      new THREE.PointsMaterial({
+        size: pointSize,
+        vertexColors: Boolean(cloudGeom.attributes.color),
+        sizeAttenuation: true,
+      })
+    );
+    points.visible = !mesh;
+    scene.add(points);
+  }
   const radius = Math.max(robust.radius, 1.6);
   if (yUp) camera.position.set(radius * 0.55, radius * 0.35, radius * 0.7);
   else camera.position.set(radius * 0.85, radius * 0.28, radius * 0.72);
@@ -404,7 +550,7 @@ async function mountMeshViewer(container, urls, options) {
     getPickTargets() {
       const targets = [];
       if (mesh && mesh.visible) targets.push(mesh);
-      if (points.visible) targets.push(points);
+      if (points && points.visible) targets.push(points);
       return targets;
     },
     status,
@@ -420,18 +566,13 @@ async function mountMeshViewer(container, urls, options) {
 
   return {
     setMode(mode) {
-      points.visible = mode === "points" || (mode === "splats" && !mesh);
-      if (mesh) mesh.visible = mode === "mesh";
-      if (mode === "splats") {
-        points.visible = true;
-        points.material.size = pointSize * 1.35;
-      } else {
-        points.material.size = pointSize;
+      if (mesh) mesh.visible = mode === "mesh" || !points;
+      if (points) {
+        points.visible = mode === "points" || (mode === "splats" && !mesh);
+        points.material.size = mode === "splats" ? pointSize * 1.35 : pointSize;
       }
     },
-    setConfidence(on) {
-      applyConfidence(cloudGeom, on, baseColors);
-    },
+    setConfidence() {},
     setMeasure: interaction.setMeasure,
     setFlyMode: interaction.setFlyMode,
     levelView() {},

@@ -1,0 +1,9 @@
+Restore point before SfM/MVS reconstruction rewrite.
+
+Git tags:
+  backup-before-sfm-mvs
+  backup-before-real-surface
+Commit still on GitHub: d58e34c
+Live site (unchanged): https://onepass3d.onrender.com
+
+To undo later: say "undo".

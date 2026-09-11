@@ -5,7 +5,10 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from backend.app.config import MAX_UPLOAD_BYTES
+from backend.app.config import MAX_UPLOAD_BYTES, normalize_quality
+from backend.pipeline.jobs.job_manager import job_manager
+from backend.pipeline.reconstruct.deps import check_dependencies
+from backend.pipeline.reconstruct.colmap.detector import check_colmap_installation
 from backend.app.models.schemas import JobDetail, JobList, JobSummary
 from backend.app.services.storage import (
     classify_upload,
@@ -18,6 +21,7 @@ from backend.app.services.storage import (
 )
 from backend.pipeline.demo.real_splat import DEFAULT_SCENE, SCENES, list_scenes, splat_path
 from backend.app.workers.pipeline_worker import enqueue, run_now
+from backend.pipeline.export.glb import fix_glb_json_padding, glb_json_has_null_padding
 
 
 router = APIRouter(prefix="/api")
@@ -33,7 +37,17 @@ def _detail(record: dict) -> JobDetail:
 
 @router.get("/health")
 def health() -> dict:
-    return {"ok": True, "name": "OnePass3D"}
+    deps = check_dependencies()
+    return {
+        "ok": True,
+        "name": "OnePass3D",
+        **deps,
+    }
+
+
+@router.get("/colmap")
+def colmap_status() -> dict:
+    return check_colmap_installation()
 
 
 @router.get("/jobs", response_model=JobList)
@@ -45,6 +59,7 @@ def get_jobs() -> JobList:
 async def create_job(
     files: list[UploadFile] = File(...),
     name: str = Form("Untitled flight"),
+    quality: str = Form("normal"),
 ) -> JobDetail:
     if not files:
         raise HTTPException(400, "Upload a drone video or photos.")
@@ -73,7 +88,12 @@ async def create_job(
         delete_job(record["id"])
         raise HTTPException(400, "Include a video or photos. Telemetry alone is not enough.")
 
-    update_job(record["id"], input_files=saved, name=name.strip() or saved[0])
+    update_job(
+        record["id"],
+        input_files=saved,
+        name=name.strip() or saved[0],
+        quality=normalize_quality(quality),
+    )
     enqueue(record["id"])
     return _detail(load_job(record["id"]))
 
@@ -136,7 +156,7 @@ def remove_job(job_id: str) -> dict:
     return {"ok": True}
 
 
-@router.get("/jobs/{job_id}/files/{filename}")
+@router.api_route("/jobs/{job_id}/files/{filename}", methods=["GET", "HEAD"])
 def get_file(job_id: str, filename: str):
     try:
         load_job(job_id)
@@ -153,9 +173,101 @@ def get_file(job_id: str, filename: str):
                 media = "image/png"
             elif safe.endswith(".json"):
                 media = "application/json"
+            elif safe.endswith(".glb"):
+                media = "model/gltf-binary"
+                if glb_json_has_null_padding(path):
+                    fix_glb_json_padding(path)
+            elif safe.endswith(".gltf"):
+                media = "model/gltf+json"
             elif safe.endswith(".splat") or safe.endswith(".ksplat"):
                 media = "application/octet-stream"
             # Do not set filename= — Safari treats attachment downloads as
             # a save dialog and the splat viewer never receives the bytes.
-            return FileResponse(path, media_type=media)
+            headers = {"X-Content-Type-Options": "nosniff"}
+            if safe.endswith(".glb"):
+                headers["Content-Type"] = "model/gltf-binary"
+            return FileResponse(path, media_type=media, headers=headers)
     raise HTTPException(404, "File not found")
+
+
+def _job_or_404(job_id: str) -> dict:
+    try:
+        return load_job(job_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Job not found")
+
+
+@router.get("/reconstruction/{job_id}/status")
+def reconstruction_status(job_id: str) -> dict:
+    record = _job_or_404(job_id)
+    result = record.get("result") or {}
+    metrics = result.get("metrics") or {}
+    progress = record.get("progress") or {}
+    return {
+        "jobId": record["id"],
+        "stage": progress.get("stage") or record.get("status"),
+        "progress": progress.get("percent") or 0,
+        "status": record.get("status"),
+        "message": progress.get("message") or record.get("error") or "",
+        "metrics": metrics,
+    }
+
+
+@router.get("/reconstruction/{job_id}/result")
+def reconstruction_result(job_id: str) -> dict:
+    record = _job_or_404(job_id)
+    result = record.get("result") or {}
+    metrics = result.get("metrics") or {}
+    if record.get("status") != "done":
+        return {
+            "status": record.get("status"),
+            "modelUrl": None,
+            "pointCloudUrl": None,
+            "previewUrl": None,
+            "metrics": metrics,
+            "error": record.get("error"),
+        }
+    return {
+        "status": "completed",
+        "modelUrl": f"/api/jobs/{job_id}/files/model.glb",
+        "pointCloudUrl": f"/api/jobs/{job_id}/files/pointcloud.ply",
+        "previewUrl": f"/api/jobs/{job_id}/files/preview.jpg",
+        "metrics": metrics,
+    }
+
+
+@router.post("/reconstruction/{job_id}/retry", response_model=JobDetail)
+def reconstruction_retry(job_id: str) -> JobDetail:
+    record = _job_or_404(job_id)
+    if record.get("status") == "running":
+        raise HTTPException(409, "This job is already running.")
+    update_job(
+        job_id,
+        status="queued",
+        error=None,
+        progress={"stage": "queued", "percent": 0, "message": "Resuming from the last finished stage"},
+        log="Retry requested — resuming from saved stages",
+    )
+    enqueue(job_id)
+    return _detail(load_job(job_id))
+
+
+@router.post("/reconstruction/{job_id}/cancel")
+def reconstruction_cancel(job_id: str) -> dict:
+    record = _job_or_404(job_id)
+    if record.get("status") in {"done", "failed"}:
+        return {"ok": True, "status": record["status"], "cancelled": False}
+    cancelled = job_manager.cancel(job_id)
+    update_job(
+        job_id,
+        status="failed",
+        error="Reconstruction was cancelled.",
+        progress={"stage": "failed", "percent": 0, "message": "Reconstruction was cancelled."},
+        log="Cancellation requested",
+    )
+    return {"ok": True, "status": "failed", "cancelled": cancelled or True}
+
+
+@router.get("/reconstruction/{job_id}/model.glb")
+def reconstruction_model(job_id: str):
+    return get_file(job_id, "model.glb")

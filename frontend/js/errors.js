@@ -52,6 +52,82 @@ export function explainFailure(raw) {
     };
   }
 
+  if (text === "'list'" || text === "list" || /could not read the openmvs file/.test(lower)) {
+    return {
+      title: "A file-format bug stopped the mesh step",
+      detail:
+        "Camera tracking and the dense point cloud finished. The app then failed while reading the OpenMVS point file.",
+      next: "Click Resume this job. It should continue from the dense point cloud, not from the 3 GB upload.",
+    };
+  }
+
+  if (/openmvs is not installed/.test(lower)) {
+    return {
+      title: "OpenMVS is not installed on this machine.",
+      detail:
+        "This Mac cannot run COLMAP PatchMatch without CUDA. OpenMVS is the local dense reconstruction engine.",
+      next: "Put the official OpenMVS macOS arm64 binaries in tools/openmvs, or set OPENMVS_PATH, then start a new job.",
+    };
+  }
+
+  if (/failed quality validation/.test(lower)) {
+    return {
+      title: "Reconstruction failed quality validation",
+      detail: text,
+      next: "The model was too fragmented or incomplete to show as a finished 3D result. Film a slower pass with more overlap.",
+    };
+  }
+
+  if (/colmap is not installed/.test(lower)) {
+    return {
+      title: "COLMAP is not installed on this machine.",
+      detail:
+        "OnePass3D now uses COLMAP for photogrammetry. Install it on this computer, then start a new job.",
+      next: "On macOS run: brew install colmap. Then restart the backend with python run.py.",
+    };
+  }
+
+  if (/cancelled/.test(lower)) {
+    return {
+      title: "Reconstruction was cancelled",
+      detail: "The COLMAP process was stopped before a model was written.",
+      next: "Start a new job if you want to try again.",
+    };
+  }
+
+  if (/mac slept|app stopped/.test(lower)) {
+    return {
+      title: "This job paused when the Mac stopped",
+      detail:
+        "The first Ignatius model is still saved. This higher-detail run did not finish because the computer went to sleep or the app was closed.",
+      next: "Start the local server again, then click Resume this job. Matching may start over.",
+    };
+  }
+
+  if (/insufficient camera registration|were registered/.test(lower)) {
+    return {
+      title: "Insufficient camera registration",
+      detail: text,
+      next: "Move the camera more slowly so consecutive frames overlap, then start a new job.",
+    };
+  }
+
+  if (/disconnected reconstruction components/.test(lower)) {
+    return {
+      title: "The camera trajectory broke apart",
+      detail: text,
+      next: "Keep the camera moving continuously through the same space. Do not jump to unrelated viewpoints.",
+    };
+  }
+
+  if (/patchmatch|cuda gpu/.test(lower)) {
+    return {
+      title: "Dense reconstruction needs a CUDA GPU",
+      detail: text,
+      next: "Feature matching and camera poses can run on this Mac in CPU mode. PatchMatch MVS needs NVIDIA CUDA, or a machine with RECON_WORKER_URL set.",
+    };
+  }
+
   if (/need at least/.test(lower) && /frame/.test(lower)) {
     return {
       title: "Not enough clear frames",
@@ -60,7 +136,39 @@ export function explainFailure(raw) {
     };
   }
 
-  if (/not enough 3d points/.test(lower)) {
+  if (/too blurry/.test(lower)) {
+    return {
+      title: "The video is too blurry",
+      detail: text,
+      next: "Fly slower, keep the subject in frame, and start a new job. A fast cinematic pass will not reconstruct.",
+    };
+  }
+
+  if (/same viewpoint|barely moved/.test(lower)) {
+    return {
+      title: "The camera barely moved",
+      detail: text,
+      next: "Fly a slow orbit or a straight pass so each second shows a new angle. Then start a new job.",
+    };
+  }
+
+  if (/no visual features|blank sky/.test(lower)) {
+    return {
+      title: "Not enough texture in the scene",
+      detail: text,
+      next: "Point the camera at buildings, roads, or ground with detail — not empty sky or water.",
+    };
+  }
+
+  if (/too thin to form a surface/.test(lower)) {
+    return {
+      title: "A surface could not be formed",
+      detail: text,
+      next: "Orbit so walls and ground are seen from several sides. Reopening this job will not retry it.",
+    };
+  }
+
+  if (/not enough 3d points|not enough overlapping/.test(lower)) {
     return {
       title: "Not enough of the scene was visible",
       detail:

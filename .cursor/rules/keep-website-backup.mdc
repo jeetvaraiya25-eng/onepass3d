@@ -1,0 +1,14 @@
+---
+description: Keep a restore point before website changes so the user can undo them
+alwaysApply: true
+---
+
+# Keep a backup before website changes
+
+Before changing the site (UI, viewer, backend, or deploy files):
+
+1. Save a restore point first: create a git tag like `backup-before-<short-change>` on the current good commit, or a branch `backup/current-live`.
+2. Do not overwrite that backup.
+3. If the user says undo / revert / go back / I don't like this, restore that backup (git checkout or revert) and tell them it is undone.
+4. Do not commit or push unless the user asks, except when they already asked to update GitHub/Render.
+5. Tell the user in simple words that a backup exists and they can say "undo" to restore it.

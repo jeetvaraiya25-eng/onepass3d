@@ -14,3 +14,4 @@ frontend/sample/*.mp4
 node_modules/
 dist/
 .env
+tools/OpenMVS_macOS_arm64.zip

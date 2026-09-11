@@ -21,6 +21,42 @@ def explain_failure(exc: BaseException) -> str:
     text = str(exc or "").strip()
     lower = text.lower()
 
+    if "colmap is not installed" in lower:
+        return "COLMAP is not installed on this machine."
+
+    if text in {"'list'", "list"} or "keyerror" in lower:
+        return (
+            "The dense point cloud was created, but the mesh step could not read "
+            "the OpenMVS file. Restart the job — it will resume from the dense cloud."
+        )
+
+    if "openmvs is not installed" in lower:
+        return (
+            "OpenMVS is not installed on this machine. "
+            "This Mac needs OpenMVS for dense reconstruction because COLMAP PatchMatch requires CUDA."
+        )
+
+    if "failed quality validation" in lower:
+        return text
+
+    if "cancelled" in lower:
+        return "Reconstruction was cancelled."
+
+    if "mac slept" in lower or "app stopped" in lower:
+        return (
+            "The Mac slept or the app stopped before this job finished. "
+            "Click Resume to continue from the last finished stage."
+        )
+
+    if "insufficient camera registration" in lower or "were registered" in lower:
+        return text
+
+    if "disconnected reconstruction components" in lower:
+        return text
+
+    if "patchmatch" in lower or "dense stereo needs a cuda" in lower:
+        return text
+
     if "lkpyramid" in lower or "prevpyr" in lower or "lvlstep" in lower:
         return (
             "These photos didn’t line up. The pictures were mixed — some upright, "

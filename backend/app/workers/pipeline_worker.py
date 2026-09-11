@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from backend.app.config import WORKER_THREADS
 from backend.app.services.errors import explain_failure
 from backend.app.services.storage import update_job
+from backend.pipeline.reconstruct.colmap.runner import ColmapCancelled
 from backend.pipeline.run import run_job
 
 
@@ -16,6 +17,16 @@ def _safe_run(job_id: str) -> None:
         run_job(job_id)
     except FileNotFoundError:
         return
+    except ColmapCancelled:
+        message = "Reconstruction was cancelled."
+        update_job(
+            job_id,
+            status="failed",
+            error=message,
+            progress={"stage": "failed", "percent": 0, "message": message},
+            log=message,
+        )
+        return
     except Exception as exc:
         message = explain_failure(exc)
         update_job(
@@ -23,7 +34,7 @@ def _safe_run(job_id: str) -> None:
             status="failed",
             error=message,
             progress={"stage": "failed", "percent": 0, "message": message},
-            log=message,
+            log=f"{message} ({type(exc).__name__}: {exc})",
         )
 
 

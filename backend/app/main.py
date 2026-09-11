@@ -11,12 +11,35 @@ from backend.app.config import DATA_DIR, FRONTEND_DIR
 from backend.pipeline.demo.real_splat import publish_frontend_samples
 
 
+def _mark_orphaned_jobs() -> None:
+    from backend.app.services.storage import list_jobs, update_job
+
+    message = (
+        "The Mac slept or the app stopped before this job finished. "
+        "Click Resume to continue from the last finished stage."
+    )
+    for job in list_jobs():
+        if job.get("status") != "running":
+            continue
+        update_job(
+            job["id"],
+            status="failed",
+            error=message,
+            progress={"stage": "failed", "percent": 0, "message": message},
+            log=message,
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     try:
         publish_frontend_samples()
     except Exception as exc:
         print(f"Sample scenes not ready yet: {exc}", flush=True)
+    try:
+        _mark_orphaned_jobs()
+    except Exception as exc:
+        print(f"Could not recover interrupted jobs: {exc}", flush=True)
     yield
 
 

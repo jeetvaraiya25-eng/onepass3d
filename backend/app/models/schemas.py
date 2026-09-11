@@ -30,6 +30,7 @@ class JobDetail(JobSummary):
     input_files: list[str] = Field(default_factory=list)
     logs: list[str] = Field(default_factory=list)
     result: Optional[dict[str, Any]] = None
+    quality: Optional[str] = None
 
 
 class JobList(BaseModel):

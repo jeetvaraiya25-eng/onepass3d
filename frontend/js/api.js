@@ -9,9 +9,10 @@ async function parseError(res) {
   }
 }
 
-export async function createJob(files, name) {
+export async function createJob(files, name, quality = "normal") {
   const body = new FormData();
   body.append("name", name || "Untitled flight");
+  body.append("quality", quality === "high" ? "high" : "normal");
   for (const file of files) body.append("files", file);
   const res = await fetch(`${API}/jobs`, { method: "POST", body });
   if (!res.ok) throw new Error(await parseError(res));
@@ -44,4 +45,22 @@ export async function listJobs() {
 
 export function fileUrl(jobId, filename) {
   return `${API}/jobs/${jobId}/files/${encodeURIComponent(filename)}`;
+}
+
+export async function getHealth() {
+  const res = await fetch(`${API}/health`);
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function retryJob(jobId) {
+  const res = await fetch(`${API}/reconstruction/${jobId}/retry`, { method: "POST" });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function cancelJob(jobId) {
+  const res = await fetch(`${API}/reconstruction/${jobId}/cancel`, { method: "POST" });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
 }

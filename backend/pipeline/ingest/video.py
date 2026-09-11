@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from backend.app.config import IMAGE_EXTENSIONS, LONG_EDGE, MAX_KEYFRAMES, VIDEO_EXTENSIONS
+from backend.app.config import IMAGE_EXTENSIONS, MAX_IMAGE_SIZE, MAX_VIDEO_SECONDS, VIDEO_EXTENSIONS, quality_preset
 
 
 def list_images(folder: Path) -> list[Path]:
@@ -19,7 +19,9 @@ def list_videos(folder: Path) -> list[Path]:
     return sorted(files, key=lambda p: p.name.lower())
 
 
-def resize_long_edge(image: np.ndarray, long_edge: int = LONG_EDGE) -> np.ndarray:
+def resize_long_edge(image: np.ndarray, long_edge: int | None = None) -> np.ndarray:
+    if long_edge is None:
+        long_edge = int(quality_preset()["max_image_size"] or MAX_IMAGE_SIZE)
     h, w = image.shape[:2]
     longest = max(h, w)
     if longest <= long_edge:
@@ -71,17 +73,23 @@ def unify_frame_sizes(frames: list[np.ndarray]) -> list[np.ndarray]:
 
 def extract_video_candidates(
     video_path: Path,
-    target: int = 80,
+    target: int = 200,
     on_progress=None,
 ) -> list[np.ndarray]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path.name}")
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    duration = (total / fps) if fps > 1e-3 else 0.0
+    if duration > MAX_VIDEO_SECONDS:
+        cap.release()
+        raise RuntimeError(
+            f"This video is {duration:.0f}s long. Upload a clip shorter than {MAX_VIDEO_SECONDS}s."
+        )
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     if width >= 2500:
-        # 4K HEVC: enough samples for indoor layout, without decoding every frame.
-        target = min(target, 80)
+        target = min(target, max(220, int(quality_preset()["candidate_frames"])))
     step = max(1, (total // target) if total > 0 else 8)
     frames: list[np.ndarray] = []
     index = 0
@@ -136,7 +144,7 @@ def collect_source_frames(input_dir: Path, on_progress=None) -> list[np.ndarray]
         frames.extend(
             extract_video_candidates(
                 video,
-                target=max(48, MAX_KEYFRAMES * 2),
+                target=int(quality_preset()["candidate_frames"]),
                 on_progress=on_progress,
             )
         )
