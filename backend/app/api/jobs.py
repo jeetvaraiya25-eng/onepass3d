@@ -10,6 +10,7 @@ from backend.pipeline.jobs.job_manager import job_manager
 from backend.pipeline.reconstruct.deps import check_dependencies
 from backend.pipeline.reconstruct.colmap.detector import check_colmap_installation
 from backend.app.models.schemas import JobDetail, JobList, JobSummary
+from backend.app.services.eta import job_timing, quality_timing_catalog
 from backend.app.services.storage import (
     classify_upload,
     delete_job,
@@ -28,11 +29,23 @@ router = APIRouter(prefix="/api")
 
 
 def _summary(record: dict) -> JobSummary:
-    return JobSummary(**{k: record[k] for k in JobSummary.model_fields})
+    # older job.json files predate some fields, so fall back to the model defaults
+    return JobSummary(**{k: record[k] for k in JobSummary.model_fields if record.get(k) is not None})
+
+
+def _job_thumbs(job_id: str) -> list[str]:
+    folder = job_dir(job_id) / "output" / "thumbs"
+    if not folder.is_dir():
+        return []
+    return sorted(path.name for path in folder.glob("thumb_*.jpg"))
 
 
 def _detail(record: dict) -> JobDetail:
-    return JobDetail(**{k: record.get(k) for k in JobDetail.model_fields})
+    data = {k: record.get(k) for k in JobDetail.model_fields}
+    data["cancelled"] = bool(record.get("cancelled"))
+    data["timing"] = job_timing(record)
+    data["thumbs"] = _job_thumbs(record.get("id") or "")
+    return JobDetail(**data)
 
 
 @router.get("/health")
@@ -41,6 +54,7 @@ def health() -> dict:
     return {
         "ok": True,
         "name": "OnePass3D",
+        "timing": quality_timing_catalog(),
         **deps,
     }
 
@@ -60,6 +74,7 @@ async def create_job(
     files: list[UploadFile] = File(...),
     name: str = Form("Untitled flight"),
     quality: str = Form("normal"),
+    duration_sec: float = Form(0),
 ) -> JobDetail:
     if not files:
         raise HTTPException(400, "Upload a drone video or photos.")
@@ -93,6 +108,7 @@ async def create_job(
         input_files=saved,
         name=name.strip() or saved[0],
         quality=normalize_quality(quality),
+        duration_sec=max(0.0, float(duration_sec or 0)),
     )
     enqueue(record["id"])
     return _detail(load_job(record["id"]))
@@ -203,6 +219,7 @@ def reconstruction_status(job_id: str) -> dict:
     result = record.get("result") or {}
     metrics = result.get("metrics") or {}
     progress = record.get("progress") or {}
+    timing = job_timing(record)
     return {
         "jobId": record["id"],
         "stage": progress.get("stage") or record.get("status"),
@@ -210,6 +227,9 @@ def reconstruction_status(job_id: str) -> dict:
         "status": record.get("status"),
         "message": progress.get("message") or record.get("error") or "",
         "metrics": metrics,
+        "etaSeconds": timing["remaining_seconds"],
+        "etaLabel": timing["remaining_label"],
+        "timing": timing,
     }
 
 
@@ -245,6 +265,7 @@ def reconstruction_retry(job_id: str) -> JobDetail:
         job_id,
         status="queued",
         error=None,
+        cancelled=False,
         progress={"stage": "queued", "percent": 0, "message": "Resuming from the last finished stage"},
         log="Retry requested — resuming from saved stages",
     )
@@ -261,6 +282,7 @@ def reconstruction_cancel(job_id: str) -> dict:
     update_job(
         job_id,
         status="failed",
+        cancelled=True,
         error="Reconstruction was cancelled.",
         progress={"stage": "failed", "percent": 0, "message": "Reconstruction was cancelled."},
         log="Cancellation requested",

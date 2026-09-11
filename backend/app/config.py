@@ -81,7 +81,7 @@ QUALITY_PRESETS = {
         "max_image_size": MAX_IMAGE_SIZE,
         "match_overlap": 20,
         "face_ratio": MESH_FACE_RATIO,
-        "prefer_photo_texture": True,
+        "prefer_photo_texture": False,
     },
 }
 

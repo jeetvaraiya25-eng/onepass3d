@@ -13,6 +13,11 @@ const SELECTOR = [
   ".meta-row",
   ".empty",
   ".notice",
+  ".chapter-head",
+  ".library-row",
+  ".build-step",
+  ".door",
+  ".index-row",
 ].join(",");
 
 const STAGGER_MS = 70;
@@ -63,7 +68,7 @@ export function scanReveals() {
   if (!scope) return;
   const skipMotion = reduceMotion();
   for (const el of scope.querySelectorAll(SELECTOR)) {
-    if (el.dataset.reveal || el.closest(".viewer-layout")) continue;
+    if (el.dataset.reveal || el.closest(".viewer-layout") || el.closest(".cover") || el.closest(".home-body") || el.closest(".index")) continue;
     el.dataset.reveal = "1";
     el.classList.add("reveal");
     const siblings = [...(el.parentElement?.children || [])].filter((n) => n.matches(SELECTOR));

@@ -1,10 +1,10 @@
 import { route } from "./router.js";
-import { renderHome } from "./pages/home.js";
-import { renderUpload } from "./pages/upload.js";
-import { renderJobs, renderJob } from "./pages/job.js";
-import { renderExampleViewer, renderViewer } from "./pages/viewer.js";
-import { renderExamples } from "./pages/examples.js";
-import { renderWatch } from "./pages/watch.js";
+import { renderHome } from "./pages/home.js?v=29";
+import { renderUpload } from "./pages/upload.js?v=8";
+import { renderJobs, renderJob } from "./pages/job.js?v=9";
+import { renderExampleViewer, renderViewer } from "./pages/viewer.js?v=10";
+import { renderExamples } from "./pages/examples.js?v=6";
+import { renderWatch } from "./pages/watch.js?v=6";
 import { setupReveals, teardownReveals } from "./reveal.js";
 
 const REVEAL_PAGES = new Set(["home", "examples", "watch", "upload", "jobs"]);
@@ -12,47 +12,22 @@ const REVEAL_PAGES = new Set(["home", "examples", "watch", "upload", "jobs"]);
 const app = document.getElementById("app");
 let teardown = null;
 
-function closeMenu() {
-  const menu = document.getElementById("workspace-menu");
-  const toggle = menu?.querySelector(".menu-toggle");
-  if (!menu || !toggle) return;
-  menu.classList.remove("open");
-  toggle.setAttribute("aria-expanded", "false");
-}
-
-function setupMenu() {
-  const menu = document.getElementById("workspace-menu");
-  const toggle = menu?.querySelector(".menu-toggle");
-  if (!menu || !toggle || toggle.dataset.bound) return;
-  toggle.dataset.bound = "1";
-  toggle.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const open = menu.classList.toggle("open");
-    toggle.setAttribute("aria-expanded", String(open));
-  });
-  document.addEventListener("click", (event) => {
-    if (!menu.contains(event.target)) closeMenu();
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeMenu();
-  });
-  menu.querySelectorAll("nav a").forEach((link) => {
-    link.addEventListener("click", closeMenu);
-  });
-}
-
 function setActive() {
   const current = route();
-  document.querySelectorAll(".menu-panel nav a").forEach((link) => {
-    const href = link.getAttribute("href");
+  const viewing = current.name === "view" || current.name === "example-view";
+  document.querySelectorAll(".site-nav nav a").forEach((link) => {
+    const key = link.dataset.nav;
     const on =
-      (current.name === "home" && href === "#/") ||
-      ((current.name === "examples" || current.name === "watch") && href === "#/examples") ||
-      (current.name === "upload" && href === "#/upload") ||
-      ((current.name === "jobs" || current.name === "job" || current.name === "view" || current.name === "example-view") && href === "#/jobs");
-    link.classList.toggle("active", on);
+      (key === "home" && current.name === "home") ||
+      (key === "examples" && (current.name === "examples" || current.name === "watch" || current.name === "example-view")) ||
+      (key === "upload" && current.name === "upload") ||
+      (key === "jobs" && (current.name === "jobs" || current.name === "job" || current.name === "view"));
+    link.classList.toggle("is-on", on);
   });
-  closeMenu();
+  document.querySelector(".shell")?.classList.toggle("is-home", current.name === "home");
+  document.querySelector(".shell")?.classList.toggle("is-view", viewing);
+  app.classList.toggle("full", viewing);
+  app.classList.toggle("home", current.name === "home");
 }
 
 async function render() {
@@ -62,20 +37,33 @@ async function render() {
   }
   const current = route();
   setActive();
-  app.classList.toggle("full", current.name === "view" || current.name === "example-view");
-  if (current.name === "home") renderHome(app);
-  if (current.name === "examples") await renderExamples(app);
-  if (current.name === "watch") renderWatch(app);
-  if (current.name === "upload") renderUpload(app);
-  if (current.name === "jobs") await renderJobs(app);
-  if (current.name === "job") teardown = await renderJob(app, current.id);
-  if (current.name === "view") teardown = await renderViewer(app, current.id);
-  if (current.name === "example-view") teardown = await renderExampleViewer(app, current.scene);
+  try {
+    if (current.name === "home") teardown = renderHome(app);
+    if (current.name === "examples") await renderExamples(app);
+    if (current.name === "watch") renderWatch(app);
+    if (current.name === "upload") renderUpload(app);
+    if (current.name === "jobs") await renderJobs(app);
+    if (current.name === "job") teardown = await renderJob(app, current.id);
+    if (current.name === "view") teardown = await renderViewer(app, current.id);
+    if (current.name === "example-view") teardown = await renderExampleViewer(app, current.scene);
+  } catch (err) {
+    console.error(err);
+    const detail = String(err?.message || err || "").slice(0, 160);
+    app.innerHTML = `
+      <div class="page">
+        <p class="home-label">Problem</p>
+        <h1>This page could not open.</h1>
+        <p class="lede">${detail || "Something went wrong."} Check that OnePass3D is running, then try again.</p>
+        <div class="cover-acts">
+          <a class="act fill" href="#/">Go home</a>
+          <a class="act line" href="#/jobs">All jobs</a>
+        </div>
+      </div>`;
+  }
 
   if (REVEAL_PAGES.has(current.name)) setupReveals(app);
   else teardownReveals();
 }
 
-setupMenu();
 window.addEventListener("hashchange", render);
 render();

@@ -24,14 +24,19 @@ class JobManager:
         with self._lock:
             self._services[job_id] = service
 
+    def is_cancelled(self, job_id: str) -> bool:
+        with self._lock:
+            event = self._events.get(job_id)
+            return bool(event and event.is_set())
+
     def cancel(self, job_id: str) -> bool:
         with self._lock:
             event = self._events.get(job_id)
-            service = self._services.get(job_id)
-        if event is None and service is None:
-            return False
-        if event is not None:
+            if event is None:
+                event = threading.Event()
+                self._events[job_id] = event
             event.set()
+            service = self._services.get(job_id)
         if service is not None:
             try:
                 service.cancel()

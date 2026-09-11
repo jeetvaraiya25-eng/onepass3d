@@ -178,6 +178,155 @@ def embed_glb_external_images(path: Path, search_dirs: list[Path] | None = None)
     return True
 
 
+def _read_glb(path: Path) -> tuple[dict, bytearray]:
+    data = Path(path).read_bytes()
+    if len(data) < 20:
+        raise RuntimeError("GLB is too small")
+    json_len, json_type = struct.unpack_from("<II", data, 12)
+    if json_type != 0x4E4F534A:
+        raise RuntimeError("First GLB chunk is not JSON")
+    gltf = json.loads(bytes(data[20 : 20 + json_len]).rstrip(b" \x00 ").decode("utf-8"))
+    json_end = 20 + json_len
+    json_end += (4 - (json_end % 4)) % 4
+    if json_end + 8 > len(data):
+        raise RuntimeError("GLB is missing a BIN chunk")
+    bin_len, bin_type = struct.unpack_from("<II", data, json_end)
+    if bin_type != 0x004E4942:
+        raise RuntimeError("Second GLB chunk is not BIN")
+    bin_start = json_end + 8
+    return gltf, bytearray(data[bin_start : bin_start + bin_len])
+
+
+def _write_glb_parts(path: Path, gltf: dict, bin_blob: bytes) -> None:
+    if gltf.get("buffers"):
+        gltf["buffers"][0]["byteLength"] = len(bin_blob)
+    else:
+        gltf["buffers"] = [{"byteLength": len(bin_blob)}]
+    json_blob = _pad4(json.dumps(gltf, separators=(",", ":"), allow_nan=False).encode("utf-8"), b" ")
+    json_chunk = struct.pack("<I", len(json_blob)) + struct.pack("<I", 0x4E4F534A) + json_blob
+    padded_bin = _pad4(bin_blob, b"\x00")
+    bin_chunk = struct.pack("<I", len(padded_bin)) + struct.pack("<I", 0x004E4942) + padded_bin
+    total = 12 + len(json_chunk) + len(bin_chunk)
+    header = struct.pack("<I", 0x46546C67) + struct.pack("<I", 2) + struct.pack("<I", total)
+    Path(path).write_bytes(header + json_chunk + bin_chunk)
+
+
+def shrink_glb_textures(path: Path, max_edge: int = 4096) -> bool:
+    """Downscale oversized atlas images so the viewer can actually show FINAL."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    path = Path(path)
+    try:
+        gltf, bin_blob = _read_glb(path)
+    except RuntimeError:
+        return False
+    images = gltf.get("images") or []
+    views = gltf.setdefault("bufferViews", [])
+    if not images:
+        return False
+    replacements: dict[int, tuple[bytes, str]] = {}
+    for image in images:
+        view_i = image.get("bufferView")
+        if view_i is None or view_i >= len(views):
+            continue
+        view = views[view_i]
+        start = int(view.get("byteOffset") or 0)
+        length = int(view.get("byteLength") or 0)
+        blob = bytes(bin_blob[start : start + length])
+        try:
+            im = Image.open(BytesIO(blob))
+            im.load()
+        except Exception:
+            continue
+        if max(im.size) <= max_edge:
+            continue
+        im = im.convert("RGB")
+        im.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+        out = BytesIO()
+        im.save(out, format="JPEG", quality=88, optimize=True)
+        replacements[int(view_i)] = (out.getvalue(), "image/jpeg")
+        image["mimeType"] = "image/jpeg"
+        image.pop("uri", None)
+    if not replacements:
+        return False
+    packed = bytearray()
+    new_views = []
+    for i, view in enumerate(views):
+        if i in replacements:
+            blob = replacements[i][0]
+        else:
+            start = int(view.get("byteOffset") or 0)
+            length = int(view.get("byteLength") or 0)
+            blob = bytes(bin_blob[start : start + length])
+        packed.extend(b"\x00" * ((4 - (len(packed) % 4)) % 4))
+        offset = len(packed)
+        packed.extend(blob)
+        next_view = {"buffer": 0, "byteOffset": offset, "byteLength": len(blob)}
+        if view.get("name"):
+            next_view["name"] = view["name"]
+        if view.get("byteStride"):
+            next_view["byteStride"] = view["byteStride"]
+        if view.get("target"):
+            next_view["target"] = view["target"]
+        new_views.append(next_view)
+    gltf["bufferViews"] = new_views
+    _write_glb_parts(path, gltf, bytes(packed))
+    return True
+
+
+def atlas_pixels_usable(arr: np.ndarray, max_unused: float = 0.28) -> bool:
+    """Reject packer backgrounds. `arr` is HxWx3 RGB.
+
+    OpenMVS leaves a large flat fill (often orange) around tiny UV islands.
+    A real photo atlas has no single colour covering that much of the image.
+    """
+    if arr.ndim != 3 or arr.shape[2] < 3 or arr.shape[0] < 8 or arr.shape[1] < 8:
+        return False
+    rgb = arr[..., :3].astype(np.int16)
+    quant = (rgb.reshape(-1, 3) // 16) * 16
+    keys, counts = np.unique(quant, axis=0, return_counts=True)
+    mode = keys[int(np.argmax(counts))].astype(np.int16)
+    mode_frac = float(counts.max()) / max(len(quant), 1)
+    if mode_frac < 0.18:
+        return True
+    unused = float((np.abs(rgb - mode).mean(axis=2) < 18).mean())
+    return unused < max_unused
+
+
+def glb_photo_atlas_usable(path: Path, max_unused: float = 0.28) -> bool:
+    """Reject OpenMVS island atlases that minify into colorful static."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    path = Path(path)
+    try:
+        gltf, bin_blob = _read_glb(path)
+    except RuntimeError:
+        return False
+    images = gltf.get("images") or []
+    views = gltf.get("bufferViews") or []
+    if not images:
+        return False
+    image = images[0]
+    view_i = image.get("bufferView")
+    if view_i is None or view_i >= len(views):
+        return False
+    view = views[view_i]
+    start = int(view.get("byteOffset") or 0)
+    length = int(view.get("byteLength") or 0)
+    blob = bytes(bin_blob[start : start + length])
+    try:
+        im = Image.open(BytesIO(blob)).convert("RGB")
+        im.load()
+    except Exception:
+        return False
+    small = im.resize((96, 96), Image.Resampling.BOX)
+    return atlas_pixels_usable(np.asarray(small), max_unused=max_unused)
+
+
 def write_glb(
     path: Path,
     xyz: np.ndarray,

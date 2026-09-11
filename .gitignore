@@ -10,7 +10,10 @@ data/jobs/
 data/sample/
 frontend/sample/*.splat
 frontend/sample/*.mp4
+# the small 720p sample clip ships with the site so the hosted build has a video
+!frontend/sample/ignatius-web.mp4
 *.log
+DensifyPointCloud-*.log
 node_modules/
 dist/
 .env

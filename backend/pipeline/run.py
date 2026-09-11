@@ -6,10 +6,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from backend.app.config import DENSE_BACKEND, MIN_FRAMES, RECONSTRUCTION_DEBUG, apply_job_quality, quality_preset
-from backend.app.services.storage import job_dir, load_job, update_job
+from backend.app.config import DENSE_BACKEND, MIN_FRAMES, RECONSTRUCTION_DEBUG, apply_job_quality
+from backend.app.services.storage import job_dir, load_job, update_job, utc_now
 from backend.pipeline.demo.real_splat import DEFAULT_SCENE, build_photoreal_sample, copy_splat_to_job
-from backend.pipeline.export.glb import embed_glb_external_images, glb_is_valid, write_glb
+from backend.pipeline.export.glb import glb_is_valid, write_glb
 from backend.pipeline.export.mesh import export_mesh
 from backend.pipeline.export.ply import write_ascii_ply
 from backend.pipeline.export.pointcloud import export_pointcloud
@@ -29,7 +29,13 @@ from backend.pipeline.reconstruct.openmvs.service import OpenMVSMissing, OpenMVS
 from backend.pipeline.reconstruct.quality_score import reconstruction_quality_score
 
 
+def _raise_if_cancelled(job_id: str) -> None:
+    if job_manager.is_cancelled(job_id):
+        raise ColmapCancelled("Reconstruction was cancelled.")
+
+
 def _progress(job_id: str, stage: str, percent: int, message: str) -> None:
+    _raise_if_cancelled(job_id)
     update_job(
         job_id,
         status="running",
@@ -39,7 +45,12 @@ def _progress(job_id: str, stage: str, percent: int, message: str) -> None:
 
 
 def run_job(job_id: str) -> None:
-    record = update_job(job_id, status="running")
+    _raise_if_cancelled(job_id)
+    record = load_job(job_id)
+    fields = {"status": "running"}
+    if not record.get("started_at"):
+        fields["started_at"] = utc_now()
+    record = update_job(job_id, **fields)
     if record.get("is_demo"):
         _run_demo(job_id)
         return
@@ -133,6 +144,7 @@ def _run_reconstruction(job_id: str) -> None:
         _progress(job_id, "selecting", 24, f"Resuming with {len(frames)} selected frames")
     else:
         def _ingest_progress(kept: int, target: int, name: str) -> None:
+            _raise_if_cancelled(job_id)
             pct = 8 + int(10 * kept / max(target, 1))
             _progress(job_id, "extracting", pct, f"Extracting frames from {name} — {kept} of {target}")
 
@@ -188,25 +200,18 @@ def _run_reconstruction(job_id: str) -> None:
     cleaned, dense = service.validate_and_clean_cloud(fused) if dense_backend == "colmap" else handles.openmvs.validate_cloud(fused)
     shutil.copy2(cleaned, ws.output / "pointcloud.ply")
 
-    xyz, rgb, faces, mesh_info, textured_glb, artifact = _run_mesh_local(
+    xyz, rgb, faces, mesh_info, _unused_texture, _artifact = _run_mesh_local(
         job_id, ws, service, handles, cleaned, fused, dense_backend
     )
 
     _progress(job_id, "glb", 94, "Creating and validating GLB")
     glb_path = ws.output / "model.glb"
-    use_photo = _use_photo_texture(textured_glb, mesh_info, len(frames))
-    if use_photo:
-        shutil.copy2(textured_glb, glb_path)
-        embed_glb_external_images(glb_path, [textured_glb.parent, ws.openmvs])
-        glb_ok, glb_why = glb_is_valid(glb_path)
-        if not glb_ok:
-            write_glb(glb_path, xyz, faces, rgb)
-            glb_ok, glb_why = glb_is_valid(glb_path)
-            artifact = "VERTEX-COLORED 3D MESH"
-    else:
-        write_glb(glb_path, xyz, faces, rgb)
-        glb_ok, glb_why = glb_is_valid(glb_path)
-        artifact = "VERTEX-COLORED 3D MESH"
+    # Always vertex colour from the mesh. OpenMVS photo atlases show up as
+    # rainbow static in the viewer, so they are never the default model.
+    write_glb(glb_path, xyz, faces, rgb)
+    glb_ok, glb_why = glb_is_valid(glb_path)
+    artifact = "VERTEX-COLORED 3D MESH"
+    use_photo = False
     if not glb_ok:
         raise RuntimeError(f"GLB conversion failed: {glb_why}")
     ws.set_stage("glb", "completed")
@@ -384,7 +389,6 @@ def _run_dense_local(job_id, ws, service, handles, cancel) -> tuple[Path, str]:
 
 def _run_mesh_local(job_id, ws, service, handles, cleaned, fused, dense_backend):
     refined = ws.openmvs / "scene_dense_mesh_refine.ply"
-    textured = ws.openmvs / "scene_dense_mesh_texture.glb"
     if (
         dense_backend == "openmvs"
         and handles.openmvs
@@ -393,41 +397,19 @@ def _run_mesh_local(job_id, ws, service, handles, cleaned, fused, dense_backend)
     ):
         _progress(job_id, "meshing", 86, "Resuming from the existing OpenMVS mesh")
         xyz, rgb, faces, mesh_info = handles.openmvs.validate_mesh_file(refined, cleaned)
-        artifact = (
-            "TEXTURED 3D MESH"
-            if textured.exists()
-            else "VERTEX-COLORED 3D MESH"
-        )
-        return xyz, rgb, faces, mesh_info, textured if textured.exists() else None, artifact
+        return xyz, rgb, faces, mesh_info, None, "VERTEX-COLORED 3D MESH"
 
     if dense_backend == "openmvs" and handles.openmvs:
         mesh_ply = handles.openmvs.reconstruct_mesh(ws.root / "openmvs" / "scene_dense.mvs")
         mesh_ply = handles.openmvs.refine_mesh(mesh_ply)
         shutil.copy2(mesh_ply, ws.mesh / mesh_ply.name)
         xyz, rgb, faces, mesh_info = handles.openmvs.validate_mesh_file(mesh_ply, cleaned)
-        textured = handles.openmvs.texture_mesh(mesh_ply)
-        artifact = "TEXTURED 3D MESH" if textured and textured.suffix.lower() in {".glb", ".obj"} else "VERTEX-COLORED 3D MESH"
-        return xyz, rgb, faces, mesh_info, textured, artifact
+        return xyz, rgb, faces, mesh_info, None, "VERTEX-COLORED 3D MESH"
 
     mesh_path = service.create_mesh(cleaned)
     mesh_path = service.simplify_mesh(mesh_path)
-    textured = service.texture_mesh(mesh_path)
     xyz, rgb, faces, mesh_info = service.load_validated_mesh(mesh_path, cleaned)
-    artifact = "TEXTURED 3D MESH" if textured is not None else "VERTEX-COLORED 3D MESH"
-    return xyz, rgb, faces, mesh_info, textured, artifact
-
-
-def _use_photo_texture(textured_glb: Path | None, mesh_info: dict, frame_count: int) -> bool:
-    """Normal jobs use vertex color when the photo wrap would be noisy static."""
-    if textured_glb is None or Path(textured_glb).suffix.lower() != ".glb":
-        return False
-    if quality_preset().get("prefer_photo_texture"):
-        return True
-    if frame_count < 70:
-        return False
-    if float(mesh_info.get("largestFraction") or 0) < 0.90:
-        return False
-    return True
+    return xyz, rgb, faces, mesh_info, None, "VERTEX-COLORED 3D MESH"
 
 
 def _export_sparse_ply(model_dir: Path, dest: Path) -> None:

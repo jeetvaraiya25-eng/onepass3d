@@ -89,6 +89,9 @@ class ColmapRunner:
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    # every path we pass is absolute; run inside the job's log folder so
+                    # OpenMVS drops its own *.log files there instead of the repo root
+                    cwd=str(self.logs_dir),
                     creationflags=creationflags,
                     preexec_fn=preexec,
                 )

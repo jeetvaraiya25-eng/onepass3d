@@ -42,6 +42,9 @@ def new_job(name: str) -> dict[str, Any]:
         "result": None,
         "is_demo": False,
         "quality": "normal",
+        "started_at": None,
+        "duration_sec": 0,
+        "cancelled": False,
     }
     save_job(record)
     return record

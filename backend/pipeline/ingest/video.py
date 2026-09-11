@@ -93,20 +93,24 @@ def extract_video_candidates(
     step = max(1, (total // target) if total > 0 else 8)
     frames: list[np.ndarray] = []
     index = 0
-    while len(frames) < target:
-        if index % step != 0:
-            if not cap.grab():
+    try:
+        while len(frames) < target:
+            if index % step != 0:
+                if not cap.grab():
+                    break
+                index += 1
+                if on_progress and index % 40 == 0:
+                    on_progress(len(frames), target, video_path.name)
+                continue
+            ok, frame = cap.read()
+            if not ok:
                 break
+            frames.append(resize_long_edge(frame))
+            if on_progress:
+                on_progress(len(frames), target, video_path.name)
             index += 1
-            continue
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frames.append(resize_long_edge(frame))
-        if on_progress:
-            on_progress(len(frames), target, video_path.name)
-        index += 1
-    cap.release()
+    finally:
+        cap.release()
     if not frames:
         raise RuntimeError("Video contained no readable frames.")
     return frames

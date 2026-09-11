@@ -1,0 +1,8 @@
+Hero loop
+
+Original: /Users/jeet/Downloads/Ignatius.mp4
+Garden statue orbit, 4K, ~4 min 22 s.
+
+  frontend/media/orbit-loop.mp4   12 s hero loop, 1280×720, 4 MB
+
+The full sample video lives in frontend/sample/ — see the notes there.

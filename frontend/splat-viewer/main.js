@@ -729,7 +729,7 @@ function createWorker(self) {
         const header_end = "end_header\n";
         const header_end_index = header.indexOf(header_end);
         if (header_end_index < 0)
-            throw new Error("Unable to read .ply file header");
+            throw new Error("Could not open this scene.");
         const vertexCount = parseInt(/element vertex (\d+)\n/.exec(header)[1]);
         console.log("Vertex Count", vertexCount);
         let row_offset = 0,
@@ -1018,7 +1018,7 @@ async function main() {
             ? new URL(loadSrc, location.origin)
             : new URL(loadSrc, "https://huggingface.co/cakewalk/splat-data/resolve/main/");
     const spinner = document.getElementById("spinner");
-    if (spinner) spinner.innerText = sceneId === "truck" ? "Loading Truck…" : "Loading Gaussians…";
+    if (spinner) spinner.innerText = sceneId === "truck" ? "Loading Truck…" : "Loading the scene…";
     const req = await fetch(url, {
         mode: "cors",
         credentials: "omit",

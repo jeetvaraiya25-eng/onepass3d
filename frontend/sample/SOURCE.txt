@@ -1,17 +1,15 @@
-Orbit drone sample (not spherical 360, not the 3DGS train scene)
+Sample orbit: Ignatius garden
 
-The Overview page embeds DJI’s Mini 4 Pro orbit short as the flight pattern:
-  https://www.youtube.com/shorts/ZV2BgGGax1s
-That file is DJI / YouTube copyright and is not copied into this repo.
+Original file: /Users/jeet/Downloads/Ignatius.mp4
 
-Downloadable sample: drone orbit around a chimney
-  Source: https://www.pexels.com/video/drone-orbit-over-a-tall-chimney-19395246/
-  Author: Dimitar Germanov
-  License: Pexels License (free to use)
+Files here:
+  ignatius-web.mp4      720p, no audio, 25 MB — what the site plays and offers
+                        for download. Committed, so a hosted build has it too.
+  ignatius-poster.jpg   first-frame poster, so the page does not stream the
+                        video until someone presses play.
+  ignatius.mp4          full 1080p copy, 198 MB. Local only (gitignored).
+  *.splat               example scenes, local only (gitignored). /api/examples
+                        reports ready:false for any that are missing, and the
+                        site then says the scene is not on this server.
 
-Photoreal Gaussian splat examples (data/sample/, not committed):
-  train.splat   Inria / Tanks and Temples train
-  truck.splat   Tanks and Temples truck
-  room.splat    Mip-NeRF 360 room
-  plush.splat   object-scale plush
-  Source: https://huggingface.co/cakewalk/splat-data
+Keep filenames lowercase: the Mac ignores case but a Linux host does not.

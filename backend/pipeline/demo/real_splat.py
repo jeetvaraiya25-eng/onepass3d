@@ -16,47 +16,58 @@ SCENES: dict[str, dict] = {
     "train": {
         "id": "train",
         "name": "Train station",
-        "job_name": "Inria train — real 3DGS",
+        "job_name": "Train station example",
         "filename": "train.splat",
         "url": f"{HF}/train.splat",
         "gaussians": 1_026_508,
-        "blurb": "Photographs of a locomotive in a shed. The original 3DGS paper scene.",
+        "blurb": "Photographs of a train engine parked inside a shed.",
         "source": "Inria 3D Gaussian Splatting — train scene (real photographs)",
     },
     "truck": {
         "id": "truck",
         "name": "Truck",
-        "job_name": "Tanks and Temples truck — real 3DGS",
+        "job_name": "Truck example",
         "filename": "truck.splat",
         "url": f"{HF}/truck.splat",
         "gaussians": 2_541_226,
-        "blurb": "Outdoor truck and foliage. Same photoreal quality as the train scene.",
+        "blurb": "A truck outdoors with trees behind it.",
         "source": "Inria 3D Gaussian Splatting — Tanks and Temples truck",
     },
     "room": {
         "id": "room",
         "name": "Room",
-        "job_name": "Mip-NeRF 360 room — real 3DGS",
+        "job_name": "Room example",
         "filename": "room.splat",
         "url": f"{HF}/room.splat",
         "gaussians": 1_593_376,
-        "blurb": "Indoor 360 capture of a furnished room.",
+        "blurb": "A furnished room, filmed all the way around.",
         "source": "Inria 3D Gaussian Splatting — Mip-NeRF 360 room",
     },
     "plush": {
         "id": "plush",
         "name": "Plush",
-        "job_name": "Plush — real 3DGS",
+        "job_name": "Plush toy example",
         "filename": "plush.splat",
         "url": f"{HF}/plush.splat",
         "gaussians": 281_498,
-        "blurb": "Object-scale scan. Smaller file, loads fast.",
+        "blurb": "A small soft toy. This one opens the fastest.",
         "source": "Inria 3D Gaussian Splatting — plush object",
     },
 }
 
 SAMPLE_SPLAT = SAMPLE_DIR / "train.splat"
 DEFAULT_SCENE = "train"
+
+
+def scene_is_served(scene_id: str) -> bool:
+    """True when a browser asking for /sample/<scene>.splat will actually get a file."""
+    from backend.app.config import FRONTEND_DIR
+
+    scene = _scene(scene_id)
+    for path in (FRONTEND_DIR / "sample" / scene["filename"], SAMPLE_DIR / scene["filename"]):
+        if path.exists() and path.is_file() and path.stat().st_size > 1_000_000:
+            return True
+    return False
 
 
 def list_scenes() -> list[dict]:
@@ -67,7 +78,7 @@ def list_scenes() -> list[dict]:
             "job_name": scene["job_name"],
             "blurb": scene["blurb"],
             "gaussians": scene["gaussians"],
-            "ready": splat_path(scene["id"]).exists() and splat_path(scene["id"]).stat().st_size > 1_000_000,
+            "ready": scene_is_served(scene["id"]),
         }
         for scene in SCENES.values()
     ]

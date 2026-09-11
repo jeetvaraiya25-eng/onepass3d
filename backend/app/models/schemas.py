@@ -24,6 +24,7 @@ class JobSummary(BaseModel):
     point_count: int = 0
     triangle_count: int = 0
     metric: bool = False
+    cancelled: bool = False
 
 
 class JobDetail(JobSummary):
@@ -31,6 +32,9 @@ class JobDetail(JobSummary):
     logs: list[str] = Field(default_factory=list)
     result: Optional[dict[str, Any]] = None
     quality: Optional[str] = None
+    started_at: Optional[str] = None
+    timing: Optional[dict[str, Any]] = None
+    thumbs: list[str] = Field(default_factory=list)
 
 
 class JobList(BaseModel):
